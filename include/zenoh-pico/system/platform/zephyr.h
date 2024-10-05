@@ -26,19 +26,41 @@
 #include <zephyr/kernel.h>
 #endif
 
+#ifdef CONFIG_PTHREAD
 #include <pthread.h>
+#endif
 
 #include "zenoh-pico/config.h"
 
 #if Z_FEATURE_MULTI_THREAD == 1
+#ifdef CONFIG_PTHREAD
 typedef pthread_t _z_task_t;
 typedef pthread_attr_t z_task_attr_t;
 typedef pthread_mutex_t _z_mutex_t;
 typedef pthread_cond_t _z_condvar_t;
+#else
+typedef struct {
+    struct k_thread thread;
+    k_tid_t tid;
+} _z_task_t;
+typedef struct {
+    k_thread_stack_t *stack;
+    size_t stack_size;
+    int prio;
+    uint32_t options;
+} z_task_attr_t;
+#endif
+typedef struct k_mutex _z_mutex_t;
+typedef struct k_condvar _z_condvar_t;
 #endif  // Z_FEATURE_MULTI_THREAD == 1
 
+#ifdef CONFIG_PTHREAD
 typedef struct timespec z_clock_t;
 typedef struct timeval z_time_t;
+#else
+typedef int64_t z_clock_t;
+typedef int64_t z_time_t;
+#endif
 
 typedef struct {
     union {
@@ -54,7 +76,7 @@ typedef struct {
 typedef struct {
     union {
 #if Z_FEATURE_LINK_TCP == 1 || Z_FEATURE_LINK_UDP_MULTICAST == 1 || Z_FEATURE_LINK_UDP_UNICAST == 1
-        struct addrinfo *_iptcp;
+        struct zsock_addrinfo *_iptcp;
 #endif
     };
 } _z_sys_net_endpoint_t;

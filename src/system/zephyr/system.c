@@ -57,6 +57,7 @@ void z_free(void *ptr) { k_free(ptr); }
 
 #if Z_FEATURE_MULTI_THREAD == 1
 
+#ifdef CONFIG_PTHREAD
 #define Z_THREADS_NUM 4
 
 #ifdef CONFIG_TEST_EXTRA_STACK_SIZE
@@ -69,8 +70,10 @@ void z_free(void *ptr) { k_free(ptr); }
 
 K_THREAD_STACK_ARRAY_DEFINE(thread_stack_area, Z_THREADS_NUM, Z_PTHREAD_STACK_SIZE_DEFAULT);
 static int thread_index = 0;
+#endif
 
 /*------------------ Task ------------------*/
+#ifdef CONFIG_PTHREAD
 z_result_t _z_task_init(_z_task_t *task, z_task_attr_t *attr, void *(*fun)(void *), void *arg) {
     z_task_attr_t *lattr = NULL;
     z_task_attr_t tmp;
@@ -88,6 +91,21 @@ z_result_t _z_task_join(_z_task_t *task) { _Z_CHECK_SYS_ERR(pthread_join(*task, 
 z_result_t _z_task_detach(_z_task_t *task) { _Z_CHECK_SYS_ERR(pthread_detach(*task)); }
 
 z_result_t _z_task_cancel(_z_task_t *task) { _Z_CHECK_SYS_ERR(pthread_cancel(*task)); }
+#else
+z_result_t _z_task_init(_z_task_t *task, z_task_attr_t *attr, void *(*fun)(void *), void *arg) {
+    k_tid_t tid = k_thread_create(&task->thread, attr->stack, attr->stack_size,
+                                  (k_thread_entry_t)fun, arg, NULL, NULL,
+                                  attr->prio, attr->options, K_NO_WAIT);
+    task->tid = tid;
+    return _Z_RES_OK;
+}
+
+z_result_t _z_task_join(_z_task_t *task) { _Z_CHECK_SYS_ERR(k_thread_join(&task->thread, K_FOREVER)); }
+
+z_result_t _z_task_detach(_z_task_t *task) { return _Z_ERR_GENERIC; }
+
+z_result_t _z_task_cancel(_z_task_t *task) { k_thread_abort(task->tid); return _Z_RES_OK; }
+#endif
 
 void _z_task_free(_z_task_t **task) {
     _z_task_t *ptr = *task;
@@ -96,6 +114,7 @@ void _z_task_free(_z_task_t **task) {
 }
 
 /*------------------ Mutex ------------------*/
+#ifdef CONFIG_PTHREAD_MUTEX
 z_result_t _z_mutex_init(_z_mutex_t *m) { _Z_CHECK_SYS_ERR(pthread_mutex_init(m, 0)); }
 
 z_result_t _z_mutex_drop(_z_mutex_t *m) {
@@ -110,8 +129,25 @@ z_result_t _z_mutex_lock(_z_mutex_t *m) { _Z_CHECK_SYS_ERR(pthread_mutex_lock(m)
 z_result_t _z_mutex_try_lock(_z_mutex_t *m) { _Z_CHECK_SYS_ERR(pthread_mutex_trylock(m)); }
 
 z_result_t _z_mutex_unlock(_z_mutex_t *m) { _Z_CHECK_SYS_ERR(pthread_mutex_unlock(m)); }
+#else
+z_result_t _z_mutex_init(_z_mutex_t *m) { _Z_CHECK_SYS_ERR(k_mutex_init(m)); }
+
+z_result_t _z_mutex_drop(_z_mutex_t *m) {
+    if (m == NULL) {
+        return Z_EINVAL;
+    }
+    return _Z_RES_OK;
+}
+
+z_result_t _z_mutex_lock(_z_mutex_t *m) { _Z_CHECK_SYS_ERR(k_mutex_lock(m, K_FOREVER)); }
+
+z_result_t _z_mutex_try_lock(_z_mutex_t *m) { _Z_CHECK_SYS_ERR(k_mutex_lock(m, K_NO_WAIT)); }
+
+z_result_t _z_mutex_unlock(_z_mutex_t *m) { _Z_CHECK_SYS_ERR(k_mutex_unlock(m)); }
+#endif
 
 /*------------------ Condvar ------------------*/
+#ifdef CONFIG_PTHREAD_COND
 z_result_t _z_condvar_init(_z_condvar_t *cv) { _Z_CHECK_SYS_ERR(pthread_cond_init(cv, 0)); }
 
 z_result_t _z_condvar_drop(_z_condvar_t *cv) { _Z_CHECK_SYS_ERR(pthread_cond_destroy(cv)); }
@@ -121,6 +157,17 @@ z_result_t _z_condvar_signal(_z_condvar_t *cv) { _Z_CHECK_SYS_ERR(pthread_cond_s
 z_result_t _z_condvar_signal_all(_z_condvar_t *cv) { _Z_CHECK_SYS_ERR(pthread_cond_broadcast(cv)); }
 
 z_result_t _z_condvar_wait(_z_condvar_t *cv, _z_mutex_t *m) { _Z_CHECK_SYS_ERR(pthread_cond_wait(cv, m)); }
+#else
+z_result_t _z_condvar_init(_z_condvar_t *cv) { _Z_CHECK_SYS_ERR(k_condvar_init(cv)); }
+
+z_result_t _z_condvar_drop(_z_condvar_t *cv) { return _Z_RES_OK; }
+
+z_result_t _z_condvar_signal(_z_condvar_t *cv) { _Z_CHECK_SYS_ERR(k_condvar_signal(cv)); }
+
+z_result_t _z_condvar_signal_all(_z_condvar_t *cv) { _Z_CHECK_SYS_ERR(k_condvar_broadcast(cv)); }
+
+z_result_t _z_condvar_wait(_z_condvar_t *cv, _z_mutex_t *m) { _Z_CHECK_SYS_ERR(k_condvar_wait(cv, m, K_FOREVER)); }
+#endif
 #endif  // Z_FEATURE_MULTI_THREAD == 1
 
 /*------------------ Sleep ------------------*/
@@ -158,78 +205,118 @@ z_result_t z_sleep_s(size_t time) {
 
 /*------------------ Instant ------------------*/
 z_clock_t z_clock_now(void) {
+#ifdef CONFIG_POSIX_CLOCK
     z_clock_t now;
     clock_gettime(CLOCK_MONOTONIC, &now);
     return now;
+#else
+    return k_uptime_ticks();
+#endif
 }
 
 unsigned long z_clock_elapsed_us(z_clock_t *instant) {
+#ifdef CONFIG_POSIX_COCK
     z_clock_t now;
     clock_gettime(CLOCK_MONOTONIC, &now);
 
     unsigned long elapsed = (1000000 * (now.tv_sec - instant->tv_sec) + (now.tv_nsec - instant->tv_nsec) / 1000);
     return elapsed;
+#else
+    return k_ticks_to_us_floor32(k_uptime_ticks() - *instant);
+#endif
 }
 
 unsigned long z_clock_elapsed_ms(z_clock_t *instant) {
+#ifdef CONFIG_POSIX_CLOCK
     z_clock_t now;
     clock_gettime(CLOCK_MONOTONIC, &now);
 
     unsigned long elapsed = (1000 * (now.tv_sec - instant->tv_sec) + (now.tv_nsec - instant->tv_nsec) / 1000000);
     return elapsed;
+#else
+    return k_ticks_to_ms_floor32(k_uptime_ticks() - *instant);
+#endif
 }
 
 unsigned long z_clock_elapsed_s(z_clock_t *instant) {
+#ifdef CONFIG_POSIX_CLOCK
     z_clock_t now;
     clock_gettime(CLOCK_MONOTONIC, &now);
 
     unsigned long elapsed = now.tv_sec - instant->tv_sec;
     return elapsed;
+#else
+    return k_ticks_to_ms_floor32(k_uptime_ticks() - *instant) / 1000;
+#endif
 }
 
 /*------------------ Time ------------------*/
 z_time_t z_time_now(void) {
+#ifdef CONFIG_POSIX_CLOCK
     z_time_t now;
     gettimeofday(&now, NULL);
     return now;
+#else
+    return k_uptime_ticks();
+#endif
 }
 
 const char *z_time_now_as_str(char *const buf, unsigned long buflen) {
+#ifdef CONFIG_POSIX_API
     z_time_t tv = z_time_now();
     struct tm ts;
     ts = *localtime(&tv.tv_sec);
     strftime(buf, buflen, "%Y-%m-%dT%H:%M:%SZ", &ts);
     return buf;
+#else
+    // TODO
+#endif
 }
 
 unsigned long z_time_elapsed_us(z_time_t *time) {
+#ifdef CONFIG_POSIX_API
     z_time_t now;
     gettimeofday(&now, NULL);
 
     unsigned long elapsed = (1000000 * (now.tv_sec - time->tv_sec) + (now.tv_usec - time->tv_usec));
     return elapsed;
+#else
+    return k_ticks_to_us_floor32(k_uptime_ticks() - *time);
+#endif
 }
 
 unsigned long z_time_elapsed_ms(z_time_t *time) {
+#ifdef CONFIG_POSIX_API
     z_time_t now;
     gettimeofday(&now, NULL);
 
     unsigned long elapsed = (1000 * (now.tv_sec - time->tv_sec) + (now.tv_usec - time->tv_usec) / 1000);
     return elapsed;
+#else
+    return k_ticks_to_ms_floor32(k_uptime_ticks() - *time);
+#endif
 }
 
 unsigned long z_time_elapsed_s(z_time_t *time) {
+#ifdef CONFIG_POSIX_API
     z_time_t now;
     gettimeofday(&now, NULL);
 
     unsigned long elapsed = now.tv_sec - time->tv_sec;
     return elapsed;
+#else
+    return k_ticks_to_ms_floor32(k_uptime_ticks() - *time) / 1000;
+#endif
 }
 
 z_result_t zp_get_time_since_epoch(zp_time_since_epoch *t) {
+#ifdef CONFIG_POSIX_API
     z_time_t now;
     gettimeofday(&now, NULL);
     t->secs = now.tv_sec;
     t->nanos = now.tv_usec * 1000;
+#else
+    // TODO
+#endif
     return 0;
 }

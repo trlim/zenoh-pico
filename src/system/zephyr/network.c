@@ -20,10 +20,10 @@
 #include <zephyr/drivers/uart.h>
 #endif
 
-#include <netdb.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include <sys/socket.h>
+
+#include <zephyr/net/socket.h>
 
 #include "zenoh-pico/collections/string.h"
 #include "zenoh-pico/config.h"
@@ -60,6 +60,7 @@ z_result_t _z_open_tcp(_z_sys_net_socket_t *sock, const _z_sys_net_endpoint_t re
 
     sock->_fd = socket(rep._iptcp->ai_family, rep._iptcp->ai_socktype, rep._iptcp->ai_protocol);
     if (sock->_fd != -1) {
+        #ifdef trlim
         z_time_t tv;
         tv.tv_sec = tout / (uint32_t)1000;
         tv.tv_usec = (tout % (uint32_t)1000) * (uint32_t)1000;
@@ -67,6 +68,7 @@ z_result_t _z_open_tcp(_z_sys_net_socket_t *sock, const _z_sys_net_endpoint_t re
             // FIXME: setting the setsockopt is consistently failing. Commenting it until further inspection.
             // ret = _Z_ERR_GENERIC;
         }
+        #endif
 
 #if LWIP_SO_LINGER == 1
         struct linger ling;
@@ -175,6 +177,7 @@ z_result_t _z_open_udp_unicast(_z_sys_net_socket_t *sock, const _z_sys_net_endpo
 
     sock->_fd = socket(rep._iptcp->ai_family, rep._iptcp->ai_socktype, rep._iptcp->ai_protocol);
     if (sock->_fd != -1) {
+        #ifdef trlim
         z_time_t tv;
         tv.tv_sec = tout / (uint32_t)1000;
         tv.tv_usec = (tout % (uint32_t)1000) * (uint32_t)1000;
@@ -182,6 +185,7 @@ z_result_t _z_open_udp_unicast(_z_sys_net_socket_t *sock, const _z_sys_net_endpo
             // FIXME: setting the setsockopt is consistently failing. Commenting it until further inspection.
             // ret = _Z_ERR_GENERIC;
         }
+        #endif
 
         if (ret != _Z_RES_OK) {
             close(sock->_fd);
@@ -284,6 +288,7 @@ z_result_t _z_open_udp_multicast(_z_sys_net_socket_t *sock, const _z_sys_net_end
     if (addrlen != 0U) {
         sock->_fd = socket(rep._iptcp->ai_family, rep._iptcp->ai_socktype, rep._iptcp->ai_protocol);
         if (sock->_fd != -1) {
+            #ifdef trlim
             z_time_t tv;
             tv.tv_sec = tout / (uint32_t)1000;
             tv.tv_usec = (tout % (uint32_t)1000) * (uint32_t)1000;
@@ -291,6 +296,7 @@ z_result_t _z_open_udp_multicast(_z_sys_net_socket_t *sock, const _z_sys_net_end
                 // FIXME: setting the setsockopt is consistently failing. Commenting it until further inspection.
                 // ret = _Z_ERR_GENERIC;
             }
+            #endif
 
             if ((ret == _Z_RES_OK) && (bind(sock->_fd, lsockaddr, addrlen) < 0)) {
                 ret = _Z_ERR_GENERIC;
@@ -382,6 +388,7 @@ z_result_t _z_listen_udp_multicast(_z_sys_net_socket_t *sock, const _z_sys_net_e
             ret = _Z_ERR_GENERIC;
         }
 
+        #ifdef trlim
         z_time_t tv;
         tv.tv_sec = tout / (uint32_t)1000;
         tv.tv_usec = (tout % (uint32_t)1000) * (uint32_t)1000;
@@ -389,6 +396,7 @@ z_result_t _z_listen_udp_multicast(_z_sys_net_socket_t *sock, const _z_sys_net_e
             // FIXME: setting the setsockopt is consistently failing. Commenting it until further inspection.
             // ret = _Z_ERR_GENERIC;
         }
+        #endif
 
         if ((ret == _Z_RES_OK) && (bind(sock->_fd, lsockaddr, addrlen) < 0)) {
             ret = _Z_ERR_GENERIC;
